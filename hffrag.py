@@ -26,7 +26,7 @@ import time
 MASKVAL = -999
 MAXTRACKS = 32
 BATCHSIZE = 64
-EPOCHS = 15000
+EPOCHS = 20000
 MAXEVENTS = 99999999999999999
 # VALFACTOR = 10
 LR = 1e-2
@@ -45,10 +45,10 @@ early_stopping = callbacks.EarlyStopping(
 )
 
 #Save weights throughout
-save_weights = callbacks.ModelCheckpoint('/home/physics/phuspv/.ssh/Project/Inbox.ckpt', save_weights_only=True, monitor='val_loss', mode='min', save_best_only=True)
+save_weights = callbacks.ModelCheckpoint('/home/physics/phuspv/.ssh/Project/Weights/Inbox.ckpt', save_weights_only=True, monitor='val_loss', mode='min', save_best_only=True)
 
 #Define ReducedLR
-reduce_lr = callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.9, patience=10, min_lr=0)
+reduce_lr = callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.9, patience=5, min_lr=0)
 
 #Define timehistory class to track average epoch times
 class TimeHistory(keras.callbacks.Callback):
@@ -434,19 +434,19 @@ y_valid = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationDat
 
 # Trains the data
 history = model.fit(X_train, y_train, validation_data = (X_valid, y_valid), batch_size=BATCHSIZE, callbacks = [reduce_lr, save_weights, time_callback], epochs=EPOCHS)
-numpy.save('/home/physics/phuspv/.ssh/Project/Epoch Times', time_callback.times)
+numpy.save('/home/physics/phuspv/.ssh/Project/Epoch Times/Inbox', time_callback.times)
 #Plots the loss curve and saves the data
 history_df = numpy.log(pd.DataFrame(history.history))
 LossFigure = history_df.loc[:, ['loss', 'val_loss']].plot().get_figure()
 
-history_df.to_pickle("/home/physics/phuspv/.ssh/Project/Inbox.pkl")
+history_df.to_pickle("/home/physics/phuspv/.ssh/Project/Loss Data/Inbox.pkl")
 
 # In[ ]:
 
 
 #Saves the model
 #model.save('Model')
-model.save_weights('Inbox.h5')
+model.save_weights('/home/physics/phuspv/.ssh/Project/Weights/Inbox.h5')
 
 
 # In[ ]:
@@ -455,6 +455,15 @@ errors = numpy.exp(history_df)
 print('Minimum validation loss is', numpy.min(errors.loc[:,'val_loss']))
 
 # In[ ]:
+pred = model.predict(tracks)
+pTDiff=pred[:,0] - bhads[:,0]
+pTErr= numpy.exp(pred[:,2])
+pTPull = pTDiff/pTErr
+
+etaDiff = pred[:,1] - bhads[:,1]
+etaErr = numpy.exp(pred[:, 3])
+etaPull = etaDiff/etaErr
+
 
 #Print any results we want
 print('pT Diff Mean = ' + str(numpy.mean(pTDiff)))
