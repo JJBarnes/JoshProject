@@ -5,7 +5,6 @@
 
 
 #Import Modules
-#test
 import uproot
 import awkward
 import numpy
@@ -18,6 +17,7 @@ from sklearn.model_selection import train_test_split
 import pandas as pd
 from numpy.lib.recfunctions import structured_to_unstructured
 from tensorflow.keras import callbacks
+import tensorflow as tf
 import time
 
 # In[52]:
@@ -26,10 +26,10 @@ import time
 MASKVAL = -999
 MAXTRACKS = 32
 BATCHSIZE = 64
-EPOCHS = 25000
+EPOCHS = 5000
 MAXEVENTS = 99999999999999999
 # VALFACTOR = 10
-LR = 1e-2
+LR = 1e-3
 
 
 # In[53]:
@@ -45,10 +45,10 @@ early_stopping = callbacks.EarlyStopping(
 )
 
 #Save weights throughout
-save_weights = callbacks.ModelCheckpoint('/home/physics/phuspv/.ssh/Project/Weights/Inbox.ckpt', save_weights_only=True, monitor='val_loss', mode='min', save_best_only=True)
+save_weights = callbacks.ModelCheckpoint('/home/physics/phuspv/.ssh/Project/Weights/Inbox.ckpt', save_weights_only=True, monitor='loss', mode='min', save_best_only=True)
 
 #Define ReducedLR
-reduce_lr = callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.9, patience=5, min_lr=0)
+reduce_lr = callbacks.ReduceLROnPlateau(monitor='loss', factor=0.9, patience=5, min_lr=1e-99)
 
 #Define timehistory class to track average epoch times
 class TimeHistory(keras.callbacks.Callback):
@@ -422,24 +422,44 @@ model.compile \
   , optimizer = keras.optimizers.Adam(learning_rate=LR)
   )
 
+#Saves predictions after every epoch
+predpts = []
+errPredpT = []
+
+def test(epochs):
+  pred = model.predict(tracks, use_multiprocessing=True)
+  predpts.append(pred[:,0])
+  errPredpT.append(pred[:,2])
+
+from keras.callbacks import LambdaCallback
+call = LambdaCallback(on_epoch_end= lambda epochs,
+        logs: test(epochs))
+
 
 # In[71]:
 # Loads the training and validation data sets
-X_train = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/X_train_data.npy")
-X_valid = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/X_valid_data.npy")
-y_train = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_train_data.npy")
-y_valid = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_valid_data.npy")
+#X_train = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/X_train_data.npy")
+#X_valid = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/X_valid_data.npy")
+#y_train = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_train_data.npy")
+#y_valid = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_valid_data.npy")
+
+X_train, X_valid, y_train, y_valid = train_test_split(tracks, bhads, train_size=0.5, random_state = 42)
+
 # In[72]:
 
 
 # Trains the data
-history = model.fit(X_train, y_train, validation_data = (X_valid, y_valid), batch_size=BATCHSIZE, callbacks = [reduce_lr, save_weights, time_callback], epochs=EPOCHS)
+history = model.fit(tracks, bhads, batch_size=BATCHSIZE, callbacks = [reduce_lr, save_weights, time_callback, call], epochs=EPOCHS, use_multiprocessing=True)
 numpy.save('/home/physics/phuspv/.ssh/Project/Epoch Times/Inbox', time_callback.times)
 #Plots the loss curve and saves the data
 history_df = numpy.log(pd.DataFrame(history.history))
 LossFigure = history_df.loc[:, ['loss', 'val_loss']].plot().get_figure()
-
 history_df.to_pickle("/home/physics/phuspv/.ssh/Project/Loss Data/Inbox.pkl")
+
+#Saves the predictions
+numpy.save('/home/physics/phuspv/.ssh/Project/Predictions')
+numpy.save('/home/physics/phuspv/.ssh/Project/Prediction uncertainty')
+
 
 # In[ ]:
 
@@ -451,8 +471,7 @@ model.save_weights('/home/physics/phuspv/.ssh/Project/Weights/Inbox.h5')
 
 # In[ ]:
 
-errors = numpy.exp(history_df)
-print('Minimum validation loss is', numpy.min(errors.loc[:,'val_loss']))
+
 
 # In[ ]:
 pred = model.predict(tracks)
@@ -464,8 +483,12 @@ etaDiff = pred[:,1] - bhads[:,1]
 etaErr = numpy.exp(pred[:, 3])
 etaPull = etaDiff/etaErr
 
+errors = numpy.exp(history_df)
 
 #Print any results we want
+
+print('Minimum validation loss is', numpy.min(errors.loc[:,'val_loss']))
+print(errors.loc[errors['val_loss']==numpy.min(errors['val_loss'])])
 print('pT Diff Mean = ' + str(numpy.mean(pTDiff)))
 print('pT Diff Median = ' + str(numpy.median(pTDiff)))
 print('pT Diff Std = ' + str(numpy.std(pTDiff)))
