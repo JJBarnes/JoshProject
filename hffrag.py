@@ -3,7 +3,6 @@
 
 # In[51]:
 
-
 #Import Modules
 import uproot
 import awkward
@@ -26,10 +25,10 @@ import time
 MASKVAL = -999
 MAXTRACKS = 32
 BATCHSIZE = 64
-EPOCHS = 5000
+EPOCHS = 500
 MAXEVENTS = 99999999999999999
 # VALFACTOR = 10
-LR = 1e-3
+LR = 1e-2
 
 
 # In[53]:
@@ -45,10 +44,10 @@ early_stopping = callbacks.EarlyStopping(
 )
 
 #Save weights throughout
-save_weights = callbacks.ModelCheckpoint('/home/physics/phuspv/.ssh/Project/Weights/Inbox.ckpt', save_weights_only=True, monitor='loss', mode='min', save_best_only=True)
+save_weights = callbacks.ModelCheckpoint('/home/physics/phuspv/.ssh/Project/Weights/NormInbox.ckpt', save_weights_only=True, monitor='loss', mode='min', save_best_only=True)
 
 #Define ReducedLR
-reduce_lr = callbacks.ReduceLROnPlateau(monitor='loss', factor=0.9, patience=5, min_lr=1e-99)
+reduce_lr = callbacks.ReduceLROnPlateau(monitor='loss', factor=0.9, patience=15, min_lr=1e-99)
 
 #Define timehistory class to track average epoch times
 class TimeHistory(keras.callbacks.Callback):
@@ -344,34 +343,41 @@ tracks = numpy.concatenate([tracks, matchedtracks[:,:,3:].to_numpy()], axis = 2)
 bhadspt = bhadspt.to_numpy()
 bhadseta = bhadseta.to_numpy()
 bhads = numpy.stack([bhadspt, bhadseta], axis=-1)
+bhads2 = numpy.stack([bhadspt, bhadseta, bhadsphi], axis=-1)
+bhadscart = ptetaphi2pxpypz(bhads2).to_numpy()
+matchedtracks = matchedtracks.to_numpy()
 
+jetpT = jets3[:,0]
+jetEta = jets3[:,1]
+jetphi = jets3[:,2]
+jets5 = numpy.stack([jetpT, jetEta, jetphi], axis = -1).to_numpy()
 
 # In[67]:
 
 
 # Creating the training model
 
+
 tracklayers = [ 32 , 32 , 32 , 32 , 32 ]
 jetlayers = [ 64 , 64 , 64 , 64 , 64 ]
 
 
-def buildModel(tlayers, jlayers, ntargets):  
+def buildModel(tlayers, jlayers, ntargets):
   inputs = layers.Input(shape=(None, tlayers[0]))
 
   outputs = inputs
   outputs = layers.Masking(mask_value=MASKVAL)(outputs)
+  outputs = layers.Normalization()(outputs)
 
   for nodes in tlayers[:-1]:
-    outputs = layers.Dropout(0.3)(outputs)
-    outputs = layers.TimeDistributed(layers.Dense(nodes, activation='relu'))(outputs)
+    outputs = layers.TimeDistributed(layers.Dense(nodes, activation='leaky_relu', kernel_initializer='he_normal'))(outputs) #, kernel_regularizer='l1_l2'
     outputs = layers.BatchNormalization()(outputs)
 
-  outputs = layers.TimeDistributed(layers.Dense(tlayers[-1], activation='softmax'))(outputs)
+  outputs = layers.TimeDistributed(layers.Dense(tlayers[-1], activation='softmax'))(outputs)#, kernel_regularizer='l1_l2'
   outputs = Sum()(outputs)
 
   for nodes in jlayers:
-    outputs = layers.Dropout(0.3)(outputs)
-    outputs = layers.Dense(nodes, activation='relu')(outputs)
+    outputs = layers.Dense(nodes, activation='leaky_relu', kernel_initializer='he_normal')(outputs)#, kernel_regularizer='l1_l2'
     outputs = layers.BatchNormalization()(outputs)
 
   outputs = layers.Dense(ntargets + ntargets*(ntargets+1)//2)(outputs)
@@ -420,20 +426,83 @@ model.summary()
 model.compile \
   ( loss = LogNormal1D
   , optimizer = keras.optimizers.Adam(learning_rate=LR)
+  , metrics = ["accuracy"]
   )
 
 #Saves predictions after every epoch
-predpts = []
+predpTs = []
 errPredpT = []
+predEtas = []
+errPredEtas = []
 
-def test(epochs):
-  pred = model.predict(tracks, use_multiprocessing=True)
-  predpts.append(pred[:,0])
-  errPredpT.append(pred[:,2])
 
 from keras.callbacks import LambdaCallback
 call = LambdaCallback(on_epoch_end= lambda epochs,
         logs: test(epochs))
+
+class PerformancePlotCallback(keras.callbacks.Callback):
+    def __init__(self, x_test, y_test, model_name):
+        self.x_test = x_test
+        self.y_test = y_test
+        self.model_name = model_name
+        
+    def on_epoch_end(self, epoch, logs={}):
+        pred = self.model.predict(matchedtracks, use_multiprocessing=True)
+        pred[:,:2] = pred[:,:2]*jets5[:,:2]
+        pred[:, 2:4] = numpy.exp(pred[:,2:4])
+        pred[:,2:4] = pred[:,2:4]*jets5[:,:2]
+        fig, ax = plt.subplots(figsize=(8,8))
+        plt.scatter(bhads[:,0], pred[:,0], alpha=0.6, 
+            color='#FF0000', lw=1, ec='black')
+
+        plt.xlim(0,400000)
+        plt.ylim(0,400000)
+        plt.xlabel('True (MeV)')
+        plt.ylabel('Predicted (MeV)')
+        plt.title(f'B-Hadron pT - Epoch: {epoch}')
+        plt.savefig('/home/physics/phuspv/.ssh/Project/Plot2/norm_model_train_images/'+self.model_name+"_"+str(epoch))
+        plt.close()
+
+        predpTs.append(pred[:,0])
+        errPredpT.append(pred[:,2])
+        predEtas.append(pred[:,1])
+        #errPredEtas.append(pred[:,3])
+
+        pTdiff = bhads[:,0] - predpTs[:]
+        pTerr = numpy.exp(errPredpT)
+        #pTpull = pTdiff / pTerr
+
+        expErrPredpT = numpy.exp(errPredpT)
+        MedErrPredpT = numpy.median(pTerr, axis =1)
+        StdpTDiff = numpy.std(pTdiff)
+
+        x_axis = numpy.linspace(0, 200000, 200000)
+        bhadMean = numpy.mean(bhads[:,0])
+        bhadStd = numpy.std(bhads[:,0])
+        bhadMedian = numpy.median(bhads[:,0])
+        bhadIQR = numpy.percentile(bhads[:,0], 75)-numpy.percentile(bhads[:,0], 25)
+
+        predMean = numpy.mean(predpTs[-1])
+        predStd = numpy.std(predpTs[-1])
+        predMedian = numpy.median(predpTs[-1])
+        predIQR = numpy.percentile(predpTs[-1], 75) - numpy.percentile(predpTs[-1], 25)
+
+
+        xs = numpy.linspace(1, len(predpTs), num=len(predpTs))
+        plt.scatter(xs,numpy.median(predpTs, axis = 1), label = "Median prediction")
+        plt.scatter(xs, numpy.median(pTerr, axis=1), label = 'Median uncertainty')
+        plt.scatter(xs, numpy.median(pTdiff, axis = 1), label = 'Mean pT Diff')
+        plt.scatter(xs, numpy.std(pTdiff, axis = 1), label = 'pTDiff Std', color = 'black')
+        plt.axhline(y=numpy.median(bhads[:,0]), label = 'True Median', color='r')
+        plt.axhline(y=57405.24285888672, label = 'Sum of tracks median')
+        plt.axhline(y=numpy.std(bhads[:,0]), label = 'True Standard Deviation', color = 'y')
+        plt.xlabel('Epochs')
+        plt.ylabel('pT (MeV)')
+        plt.legend()
+        plt.ylim(0,100000)
+        plt.savefig('Norm Preds over time')
+        plt.show()
+        plt.close()
 
 
 # In[71]:
@@ -443,22 +512,26 @@ call = LambdaCallback(on_epoch_end= lambda epochs,
 #y_train = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_train_data.npy")
 #y_valid = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_valid_data.npy")
 
-X_train, X_valid, y_train, y_valid = train_test_split(tracks, bhads, train_size=0.5, random_state = 42)
+scaledbhads = (bhads/jets5[:,:2])
+x_train, x_test, y_train, y_test = train_test_split(matchedtracks, scaledbhads, train_size = 0.5, random_state=42)
+
+numpy.save("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/X_train_data.npy", x_train)
+numpy.save("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/X_valid_data.npy", x_test)
+numpy.save("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_train_data.npy", y_train)
+numpy.save("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_valid_data.npy", y_test)
 
 # In[72]:
 
-
 # Trains the data
-history = model.fit(tracks, bhads, batch_size=BATCHSIZE, callbacks = [reduce_lr, save_weights, time_callback, call], epochs=EPOCHS, use_multiprocessing=True)
+performance = PerformancePlotCallback(x_test, y_test, "Norm Model")
+
+history = model.fit(x_train, y_train, validation_data=[x_test,y_test], batch_size=BATCHSIZE, callbacks = [reduce_lr, save_weights, time_callback, performance], epochs=EPOCHS, use_multiprocessing=True)
 numpy.save('/home/physics/phuspv/.ssh/Project/Epoch Times/Inbox', time_callback.times)
-#Plots the loss curve and saves the data
-history_df = numpy.log(pd.DataFrame(history.history))
-LossFigure = history_df.loc[:, ['loss', 'val_loss']].plot().get_figure()
-history_df.to_pickle("/home/physics/phuspv/.ssh/Project/Loss Data/Inbox.pkl")
+
 
 #Saves the predictions
-numpy.save('/home/physics/phuspv/.ssh/Project/Predictions')
-numpy.save('/home/physics/phuspv/.ssh/Project/Prediction uncertainty')
+numpy.save('/home/physics/phuspv/.ssh/Project/Norm Predictions', predpTs)
+numpy.save('/home/physics/phuspv/.ssh/Project/Norm Uncertainties', errPredpT)
 
 
 # In[ ]:
@@ -466,34 +539,36 @@ numpy.save('/home/physics/phuspv/.ssh/Project/Prediction uncertainty')
 
 #Saves the model
 #model.save('Model')
-model.save_weights('/home/physics/phuspv/.ssh/Project/Weights/Inbox.h5')
+model.save_weights('/home/physics/phuspv/.ssh/Project/Weights/Norm Weights.h5')
 
 
 # In[ ]:
 
 
-
 # In[ ]:
-pred = model.predict(tracks)
+pred = model.predict(matchedtracks)
+pred[:,:2] = pred[:,:2]*jets5[:,:2]
+pred[:, 2:4] = numpy.exp(pred[:,2:4])
+pred[:,2:4] = pred[:,2:4]*jets5[:,:2]
+
 pTDiff=pred[:,0] - bhads[:,0]
-pTErr= numpy.exp(pred[:,2])
+pTErr= numpy.std(bhads[:,0])
 pTPull = pTDiff/pTErr
 
 etaDiff = pred[:,1] - bhads[:,1]
-etaErr = numpy.exp(pred[:, 3])
-etaPull = etaDiff/etaErr
+#etaErr = numpy.exp(pred[:, 3])
+#etaPull = etaDiff/etaErr
 
 errors = numpy.exp(history_df)
 
-#Print any results we want
+fig = binneddensity(pred[:,0], fixedbinning(0,100000,100), xlabel = 'Predictions')
+fig.savefig('/home/physics/phuspv/.ssh/Project/Norm Predictions.png')
+plt.close()
 
-print('Minimum validation loss is', numpy.min(errors.loc[:,'val_loss']))
-print(errors.loc[errors['val_loss']==numpy.min(errors['val_loss'])])
-print('pT Diff Mean = ' + str(numpy.mean(pTDiff)))
-print('pT Diff Median = ' + str(numpy.median(pTDiff)))
-print('pT Diff Std = ' + str(numpy.std(pTDiff)))
-print('pT Diff IQR = ' + str(numpy.percentile(pTDiff, 75)-numpy.percentile(pTDiff, 25)))
-print('Pull Mean = ' + str(numpy.mean(pTPull)))
-print('Pull Median = ' + str(numpy.median(pTPull)))
-print('Pull Std = ' + str(numpy.std(pTPull)))
-print('Pull IQR = ' + str(numpy.percentile(pTPull, 75)-numpy.percentile(pTPull, 25)))
+
+
+#Plots the loss curve and saves the data
+history_df = numpy.log(pd.DataFrame(history.history))
+LossFigure = history_df.loc[:, ['loss', 'val_loss']].plot().get_figure()
+LossFigure.savefig('Norm Loss Fig')
+history_df.to_pickle("/home/physics/phuspv/.ssh/Project/Loss Data/Norm.pkl")
