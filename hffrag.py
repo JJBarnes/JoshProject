@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[51]:
+# In[434]:
+
 
 #Import Modules
 import uproot
@@ -19,19 +20,21 @@ from tensorflow.keras import callbacks
 import tensorflow as tf
 import time
 
-# In[52]:
+
+# In[564]:
+
 
 #Set hyperparameters
 MASKVAL = -999
 MAXTRACKS = 32
 BATCHSIZE = 64
-EPOCHS = 500
+EPOCHS = 200
 MAXEVENTS = 99999999999999999
 # VALFACTOR = 10
 LR = 1e-2
 
 
-# In[53]:
+# In[565]:
 
 
 # Define Callbacks
@@ -40,44 +43,27 @@ LR = 1e-2
 early_stopping = callbacks.EarlyStopping(
     min_delta=0.001,
     patience = 50,
-    restore_best_weights = True,
+    restore_best_weights = True, monitor = 'val_loss'
 )
 
-#Save weights throughout
-save_weights = callbacks.ModelCheckpoint('/home/physics/phuspv/.ssh/Project/Weights/NormInbox.ckpt', save_weights_only=True, monitor='loss', mode='min', save_best_only=True)
-
 #Define ReducedLR
-reduce_lr = callbacks.ReduceLROnPlateau(monitor='loss', factor=0.9, patience=15, min_lr=1e-99)
-
-#Define timehistory class to track average epoch times
-class TimeHistory(keras.callbacks.Callback):
-    def on_train_begin(self, logs={}):
-        self.times = []
-
-    def on_epoch_begin(self, epoch, logs={}):
-        self.epoch_time_start = time.time()
-
-    def on_epoch_end(self, epoch, logs={}):
-        self.times.append(time.time() - self.epoch_time_start)
-
-time_callback = TimeHistory()
+reduce_lr = callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.9,
+                              patience=20, min_lr=1e-8)
 
 
-# In[54]:
+# In[437]:
 
 
 #Open the root file
-tree = uproot.open("hffrag.root:CharmAnalysis")
+tree = uproot.open("/storage/epp2/phswmv/data/hffrag/hffrag.root:CharmAnalysis")
 
 
-# In[55]:
+# In[438]:
 
 
 # Decide which branches of the tree we actually want to look at
 # Not currently used!
-branches = \
-  [ \
-
+branches =   [ 
   # true jet information
    "AnalysisAntiKt4TruthJets_pt"
    , "AnalysisAntiKt4TruthJets_eta"
@@ -114,19 +100,20 @@ branches = \
 
 
   # True jet information
-jetfeatures = \
-  [ "AnalysisAntiKt4TruthJets_pt"
+jetfeatures =   [ "AnalysisAntiKt4TruthJets_pt"
   , "AnalysisAntiKt4TruthJets_eta"
   , "AnalysisAntiKt4TruthJets_phi"
+  , "AnalysisAntiKt4TruthJets_m"
   , "AnalysisAntiKt4TruthJets_ghostB_pt"
   , "AnalysisAntiKt4TruthJets_ghostB_eta"
   , "AnalysisAntiKt4TruthJets_ghostB_phi"
+  ,"AnalysisAntiKt4TruthJets_ghostB_m"
   ]
+
 
 # true b-hadron information
 # these b-hadrons are inside the truth jets
-bhadfeatures = \
-   [ "AnalysisAntiKt4TruthJets_ghostB_pt"
+bhadfeatures =    [ "AnalysisAntiKt4TruthJets_ghostB_pt"
    , "AnalysisAntiKt4TruthJets_ghostB_eta"
    , "AnalysisAntiKt4TruthJets_ghostB_phi"
    , "AnalysisAntiKt4TruthJets_ghostB_m"
@@ -134,8 +121,7 @@ bhadfeatures = \
   
 
 # reconstructed track information
-trackfeatures = \
-  [ "AnalysisTracks_pt"
+trackfeatures =   [ "AnalysisTracks_pt"
   , "AnalysisTracks_eta"
   , "AnalysisTracks_phi"
   , "AnalysisTracks_z0sinTheta"
@@ -146,14 +132,14 @@ trackfeatures = \
   ]
 
 
-# In[56]:
+# In[439]:
 
 
 # Read in the requested branches from the file
 features = tree.arrays(jetfeatures + trackfeatures, entry_stop=MAXEVENTS)
 
 
-# In[57]:
+# In[440]:
 
 
 #Find where angular distance is small
@@ -173,7 +159,7 @@ def matchTracks(jets, trks):
   return numpy.sqrt(dphis**2 + detas**2) < 0.4
 
 
-# In[58]:
+# In[441]:
 
 
 #Converting from polar to cartesian
@@ -219,22 +205,20 @@ def ptetaphi2pxpypz2(ptetaphi):
   return numpy.concatenate([pxs, pys, pzs], axis=2)
 
 
-# In[59]:
+# In[442]:
 
 
 # Pads inputs with nans up to the given maxsize
 def pad(xs, maxsize):
   #Find 'none' values in array and replace with MASKVAL (= fill_none)
-  ys = \
-    awkward.fill_none \
-  ( awkward.pad_none(xs, maxsize, axis=1, clip=True) #Adding 'none' values to make sure it is correct size
+  ys =     awkward.fill_none   ( awkward.pad_none(xs, maxsize, axis=1, clip=True) #Adding 'none' values to make sure it is correct size
   , MASKVAL
   )[:,:maxsize]
 
   return awkward.to_regular(ys, axis=1)
 
 
-# In[60]:
+# In[443]:
 
 
 def flatten1(xs, maxsize=-1):
@@ -248,7 +232,7 @@ def flatten1(xs, maxsize=-1):
   return awkward.zip(ys)
 
 
-# In[61]:
+# In[444]:
 
 
 #Define histogram plotting functions
@@ -283,8 +267,7 @@ def binneddensity(xs, binning, label=None, xlabel=None, ylabel="binned probabili
   xs = (binning[1:]+binning[:-1]) / 2.0
   xerrs = ((binning[1:]-binning[:-1]) / 2.0)
 
-  plt.errorbar \
-    ( xs
+  plt.errorbar     ( xs
     , ys
     , xerr=xerrs
     , yerr=yerrs
@@ -299,24 +282,23 @@ def binneddensity(xs, binning, label=None, xlabel=None, ylabel="binned probabili
   return fig
 
 
-# In[62]:
+# In[445]:
 
 
-events = \
-  features[awkward.sum(features["AnalysisAntiKt4TruthJets_pt"] > 25000, axis=1) > 0]
+events =   features[awkward.sum(features["AnalysisAntiKt4TruthJets_pt"] > 25000, axis=1) > 0]
 
 jets1 = events[jetfeatures][:,0] #First jet
 tracks = events[trackfeatures]
 
 
-# In[63]:
+# In[446]:
 
 
 matchedtracks = tracks[matchTracks(jets1, tracks)] 
 matchedtracks = flatten1(matchedtracks, MAXTRACKS) #Turn into regular np array
 
 
-# In[64]:
+# In[447]:
 
 
 bjets = awkward.sum(jets1["AnalysisAntiKt4TruthJets_ghostB_pt"] > 5000, axis=1) > 0 #Find b hadron jets with certain momentum
@@ -324,17 +306,18 @@ jets2 = jets1[bjets] #Jets identified as b jets are only jets considered
 bhadspt= jets2["AnalysisAntiKt4TruthJets_ghostB_pt"][:,0] #np Stack here - Each sub array contains all the features of the jet (axis -1)
 bhadseta = jets2["AnalysisAntiKt4TruthJets_ghostB_eta"][:, 0]
 bhadsphi = jets2["AnalysisAntiKt4TruthJets_ghostB_phi"][:,0]
+bmass = jets2["AnalysisAntiKt4TruthJets_ghostB_m"][:,0].to_numpy()
 matchedtracks = matchedtracks[bjets]
 
 
-# In[65]:
+# In[448]:
 
 
 jets3 = structured_to_unstructured(jets2[jetfeatures[:-3]]) #number of features
 matchedtracks = structured_to_unstructured(matchedtracks)
 
 
-# In[66]:
+# In[449]:
 
 
 jets4 = ptetaphi2pxpypz(jets3).to_numpy()
@@ -352,17 +335,40 @@ jetEta = jets3[:,1]
 jetphi = jets3[:,2]
 jets5 = numpy.stack([jetpT, jetEta, jetphi], axis = -1).to_numpy()
 
-# In[67]:
+
+# In[ ]:
+
+
+bhadspx = bhadscart[:,0] 
+bhadspy = bhadscart[:,1]
+bhadspz = bhadscart[:,2]
+bhadsmom = (bhadspx**2+bhadspy**2+bhadspz**2)
+bhadenergy = (bhadsmom+bmass**2)
+truejetpx = jets4[:,0]
+truejetpy = jets4[:,1]
+truejetpz = jets4[:,2]
+truejetpT = jets5[:,0]
+truejeteta = jets5[:,1]
+truejetmass = jets2["AnalysisAntiKt4TruthJets_m"].to_numpy()
+
+bfeatures = numpy.stack([bhadspx, bhadspy, bhadspz, bhadspt, bhadseta, bmass], axis = -1)
+truejetfeatures = numpy.stack([truejetpx, truejetpy, truejetpz, truejetpT, truejeteta, truejetmass], axis = -1)
+
+scaler = numpy.stack([truejetpx, truejetpy, truejetpz, truejetpT, truejeteta, truejetmass], axis=-1)
+targets = bfeatures/scaler
+targets = targets.to_numpy()
+
+
+# In[566]:
 
 
 # Creating the training model
 
-
 tracklayers = [ 32 , 32 , 32 , 32 , 32 ]
-jetlayers = [ 64 , 64 , 64 , 64 , 64 ]
-
+jetlayers = [ 64 , 64, 64, 64, 64 ]
 
 def buildModel(tlayers, jlayers, ntargets):
+
   inputs = layers.Input(shape=(None, tlayers[0]))
 
   outputs = inputs
@@ -370,33 +376,29 @@ def buildModel(tlayers, jlayers, ntargets):
   outputs = layers.Normalization()(outputs)
 
   for nodes in tlayers[:-1]:
-    outputs = layers.TimeDistributed(layers.Dense(nodes, activation='leaky_relu', kernel_initializer='he_normal'))(outputs) #, kernel_regularizer='l1_l2'
+    outputs = layers.Dropout(0.30)(outputs)
+    outputs = layers.TimeDistributed(layers.Dense(nodes, activation='leaky_relu', kernel_initializer='he_normal', kernel_regularizer='l1_l2'))(outputs)
     outputs = layers.BatchNormalization()(outputs)
 
-  outputs = layers.TimeDistributed(layers.Dense(tlayers[-1], activation='softmax'))(outputs)#, kernel_regularizer='l1_l2'
+  outputs = layers.TimeDistributed(layers.Dense(tlayers[-1], activation='softmax'))(outputs)
   outputs = Sum()(outputs)
 
+
   for nodes in jlayers:
-    outputs = layers.Dense(nodes, activation='leaky_relu', kernel_initializer='he_normal')(outputs)#, kernel_regularizer='l1_l2'
+    outputs = layers.Dropout(0.3)(outputs)
+    outputs = layers.Dense(nodes, activation='leaky_relu', kernel_initializer='he_normal', kernel_regularizer='l1_l2')(outputs)
     outputs = layers.BatchNormalization()(outputs)
 
   outputs = layers.Dense(ntargets + ntargets*(ntargets+1)//2)(outputs)
 
-  return \
-    keras.Model \
-    ( inputs = inputs
+
+  
+  return     keras.Model     ( inputs = inputs
     , outputs = outputs
     )
 
 
-# In[68]:
-
-
-## Generalise loss to n targets
-##Convert b hadron features to cartesian
-
-
-# In[69]:
+# In[567]:
 
 
 # Creating the loss function
@@ -416,29 +418,43 @@ def LogNormal1D(true, meanscovs):
   return loss
 
 
-# In[70]:
+# In[568]:
 
 
-model = buildModel([len(trackfeatures)] + tracklayers, jetlayers, 2)
+model = buildModel([len(trackfeatures)] + tracklayers, jetlayers, 6)
+
+
+# In[569]:
+
 
 model.summary()
 
-model.compile \
-  ( loss = LogNormal1D
-  , optimizer = keras.optimizers.Adam(learning_rate=LR)
-  , metrics = ["accuracy"]
+
+# In[570]:
+
+
+def get_lr_metric(optimizer):
+    def lr(y_true, y_pred):
+        return optimizer._decayed_lr(tf.float32)
+    return lr
+
+import tensorflow_addons as tfa
+steps_per_epoch = len(matchedtracks)
+clr = tfa.optimizers.CyclicalLearningRate(initial_learning_rate = 1e-8,maximal_learning_rate=0.01, scale_fn = lambda x: 1/(2**(x-1)), step_size = 2*steps_per_epoch)
+steps = numpy.arange(0,100 * steps_per_epoch)
+lr = clr(steps)
+
+optimizer = keras.optimizers.Adam(learning_rate = lr, clipnorm = 6)
+lr_metric = get_lr_metric(optimizer)
+
+model.compile   ( loss = LogNormal1D
+  , optimizer = optimizer,
+  metrics = [lr_metric]
   )
 
-#Saves predictions after every epoch
-predpTs = []
-errPredpT = []
-predEtas = []
-errPredEtas = []
 
+# In[571]:
 
-from keras.callbacks import LambdaCallback
-call = LambdaCallback(on_epoch_end= lambda epochs,
-        logs: test(epochs))
 
 class PerformancePlotCallback(keras.callbacks.Callback):
     def __init__(self, x_test, y_test, model_name):
@@ -447,91 +463,65 @@ class PerformancePlotCallback(keras.callbacks.Callback):
         self.model_name = model_name
         
     def on_epoch_end(self, epoch, logs={}):
-        pred = self.model.predict(matchedtracks, use_multiprocessing=True)
-        pred[:,:2] = pred[:,:2]*jets5[:,:2]
-        pred[:, 2:4] = numpy.exp(pred[:,2:4])
-        pred[:,2:4] = pred[:,2:4]*jets5[:,:2]
-        fig, ax = plt.subplots(figsize=(8,8))
-        plt.scatter(bhads[:,0], pred[:,0], alpha=0.6, 
-            color='#FF0000', lw=1, ec='black')
+        pred = self.model.predict([matchedtracks, truejetmass], use_multiprocessing=True)
+        pred[:,:6] = pred[:,:6]*scaler
+        pred[:,6:12] = numpy.exp(pred[:,6:12])
+        pred[:,6:12] = pred[:,6:12]*scaler
 
-        plt.xlim(0,400000)
-        plt.ylim(0,400000)
-        plt.xlabel('True (MeV)')
-        plt.ylabel('Predicted (MeV)')
-        plt.title(f'B-Hadron pT - Epoch: {epoch}')
-        plt.savefig('/home/physics/phuspv/.ssh/Project/Plot2/norm_model_train_images/'+self.model_name+"_"+str(epoch))
+
+        fig, axes = plt.subplots(2,3, figsize = (15,12))
+        plt.suptitle("Correlations between true and predicted, epoch: " + str(epoch) + " LR: "+ str(lr_metric))
+        axes[0,0].scatter(bfeatures[:,0], pred[:,0], color='red', ec='black', alpha = 0.6)
+        axes[0,0].set(xlabel='True px (MeV)', ylabel='Predicted px (MeV)', xlim=(-500000,500000), ylim=(-500000,500000))
+        axes[0,1].scatter(bfeatures[:,1], pred[:,1], color = 'blue', ec='black', alpha = 0.6)
+        axes[0,1].set(xlabel='True py (MeV)', ylabel='Predicted py (MeV)', xlim=(-500000,500000), ylim=(-500000,500000))
+        axes[0,2].scatter(bfeatures[:,2], pred[:,2], color = 'green', ec='black', alpha = 0.6)
+        axes[0,2].set(xlabel='True pz (MeV)', ylabel='Predicted pz (MeV)', xlim=(-700000,700000), ylim=(-700000,700000))
+        axes[1,0].scatter(bfeatures[:,3], pred[:,3], color = 'yellow', ec='black', alpha = 0.6)
+        axes[1,0].set(xlabel='True pT (MeV)', ylabel='Predicted pT (MeV)', xlim=(0,500000), ylim=(0,500000))
+        axes[1,1].scatter(bfeatures[:,4], pred[:,4], color = 'cyan', ec='black', alpha = 0.6)
+        axes[1,1].set(xlabel='True eta', ylabel='Predicted eta', xlim=(-5,5), ylim=(-5,5))
+        axes[1,2].scatter(bfeatures[:,5], pred[:,5], color = 'magenta', ec='black', alpha = 0.6)
+        axes[1,2].set(xlabel='True mass (MeV)', ylabel='Predicted mass (MeV)', xlim=(0,10000), ylim=(0,10000))
+        plt.savefig('/home/physics/phuspv/.ssh/Project/Plot2/long_run_lognormal/'+self.model_name+"_"+str(epoch))
         plt.close()
 
-        predpTs.append(pred[:,0])
-        errPredpT.append(pred[:,2])
-        predEtas.append(pred[:,1])
-        #errPredEtas.append(pred[:,3])
-
-        pTdiff = bhads[:,0] - predpTs[:]
-        pTerr = numpy.exp(errPredpT)
-        #pTpull = pTdiff / pTerr
-
-        expErrPredpT = numpy.exp(errPredpT)
-        MedErrPredpT = numpy.median(pTerr, axis =1)
-        StdpTDiff = numpy.std(pTdiff)
-
-        x_axis = numpy.linspace(0, 200000, 200000)
-        bhadMean = numpy.mean(bhads[:,0])
-        bhadStd = numpy.std(bhads[:,0])
-        bhadMedian = numpy.median(bhads[:,0])
-        bhadIQR = numpy.percentile(bhads[:,0], 75)-numpy.percentile(bhads[:,0], 25)
-
-        predMean = numpy.mean(predpTs[-1])
-        predStd = numpy.std(predpTs[-1])
-        predMedian = numpy.median(predpTs[-1])
-        predIQR = numpy.percentile(predpTs[-1], 75) - numpy.percentile(predpTs[-1], 25)
-
-
-        xs = numpy.linspace(1, len(predpTs), num=len(predpTs))
-        plt.scatter(xs,numpy.median(predpTs, axis = 1), label = "Median prediction")
-        plt.scatter(xs, numpy.median(pTerr, axis=1), label = 'Median uncertainty')
-        plt.scatter(xs, numpy.median(pTdiff, axis = 1), label = 'Mean pT Diff')
-        plt.scatter(xs, numpy.std(pTdiff, axis = 1), label = 'pTDiff Std', color = 'black')
-        plt.axhline(y=numpy.median(bhads[:,0]), label = 'True Median', color='r')
-        plt.axhline(y=57405.24285888672, label = 'Sum of tracks median')
-        plt.axhline(y=numpy.std(bhads[:,0]), label = 'True Standard Deviation', color = 'y')
-        plt.xlabel('Epochs')
-        plt.ylabel('pT (MeV)')
-        plt.legend()
-        plt.ylim(0,100000)
-        plt.savefig('Norm Preds over time')
-        plt.show()
+        massdiff = pred[:,5] - bmass
+        masserr = pred[:,11]
+        massPull = massdiff / masserr
+        fig = binneddensity(massPull, fixedbinning(-10,10,100), xlabel = 'Mass Pull', label = ("Mass Pull - Epoch: "+str(epoch)))
+        fig.savefig('/home/physics/phuspv/.ssh/Project/Plot2/Mass_Pull_Plots/'+self.model_name+"_"+str(epoch))
+        plt.close()
+        fig = binneddensity(massPull, fixedbinning(numpy.min(massPull),numpy.max(massPull),100), xlabel = 'Mass Pull', label = ("Mass Pull - Epoch: "+str(epoch)))
+        fig.savefig('/home/physics/phuspv/.ssh/Project/Plot2/Mass_Pull_Plots_Scaled/'+self.model_name+"_"+str(epoch))
+        plt.close()
+        fig = binneddensity(massdiff, fixedbinning(numpy.min(massdiff),numpy.max(massdiff),100), xlabel = 'Mass Difference', label = ("Mass Difference - Epoch: "+str(epoch)))
+        fig.savefig('/home/physics/phuspv/.ssh/Project/Plot2/Mass_Diff_Plots_Scaled/'+self.model_name+"_"+str(epoch))
+        plt.close()
+        fig = binneddensity(massdiff, fixedbinning(-5000,5000,100), xlabel = 'Mass Difference', label = ("Mass Difference - Epoch: "+str(epoch)))
+        fig.savefig('/home/physics/phuspv/.ssh/Project/Plot2/Mass_Diff_Plots/'+self.model_name+"_"+str(epoch))
         plt.close()
 
 
-# In[71]:
-# Loads the training and validation data sets
-#X_train = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/X_train_data.npy")
-#X_valid = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/X_valid_data.npy")
-#y_train = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_train_data.npy")
-#y_valid = numpy.load("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_valid_data.npy")
+# In[572]:
 
-scaledbhads = (bhads/jets5[:,:2])
-x_train, x_test, y_train, y_test = train_test_split(matchedtracks, scaledbhads, train_size = 0.5, random_state=42)
 
-numpy.save("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/X_train_data.npy", x_train)
-numpy.save("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/X_valid_data.npy", x_test)
-numpy.save("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_train_data.npy", y_train)
-numpy.save("/home/physics/phuspv/.ssh/Project/TrainingAndValidationData/y_valid_data.npy", y_test)
+# Splits the data into training and validation sets
+X_train, X_valid, y_train, y_valid = train_test_split(matchedtracks, bhads, train_size = 0.5)
 
-# In[72]:
+performance = PerformancePlotCallback(X_valid, y_valid, "Long Test")
+
+
+# In[573]:
+
 
 # Trains the data
-performance = PerformancePlotCallback(x_test, y_test, "Norm Model")
+history = model.fit(X_train, y_train, validation_data = (X_valid, y_valid), batch_size=BATCHSIZE, callbacks = reduce_lr, epochs=EPOCHS)
 
-history = model.fit(x_train, y_train, validation_data=[x_test,y_test], batch_size=BATCHSIZE, callbacks = [reduce_lr, save_weights, time_callback, performance], epochs=EPOCHS, use_multiprocessing=True)
-numpy.save('/home/physics/phuspv/.ssh/Project/Epoch Times/Inbox', time_callback.times)
-
-
-#Saves the predictions
-numpy.save('/home/physics/phuspv/.ssh/Project/Norm Predictions', predpTs)
-numpy.save('/home/physics/phuspv/.ssh/Project/Norm Uncertainties', errPredpT)
+#Plots and saves the loss curve
+history_df = numpy.log(pd.DataFrame(history.history))
+LossFigure = history_df.loc[:, ['loss', 'val_loss']].plot().get_figure()
+LossFigure.savefig('Long Loss.png')
 
 
 # In[ ]:
@@ -539,36 +529,62 @@ numpy.save('/home/physics/phuspv/.ssh/Project/Norm Uncertainties', errPredpT)
 
 #Saves the model
 #model.save('Model')
-model.save_weights('/home/physics/phuspv/.ssh/Project/Weights/Norm Weights.h5')
+#model.save_weights('Model Weights 5000 epoch.h5')
 
 
 # In[ ]:
 
 
-# In[ ]:
+# Uses the model to predict validation set
 pred = model.predict(matchedtracks)
-pred[:,:2] = pred[:,:2]*jets5[:,:2]
-pred[:, 2:4] = numpy.exp(pred[:,2:4])
-pred[:,2:4] = pred[:,2:4]*jets5[:,:2]
 
-pTDiff=pred[:,0] - bhads[:,0]
-pTErr= numpy.std(bhads[:,0])
-pTPull = pTDiff/pTErr
 
-etaDiff = pred[:,1] - bhads[:,1]
-#etaErr = numpy.exp(pred[:, 3])
-#etaPull = etaDiff/etaErr
+# In[ ]:
 
-errors = numpy.exp(history_df)
 
-fig = binneddensity(pred[:,0], fixedbinning(0,100000,100), xlabel = 'Predictions')
-fig.savefig('/home/physics/phuspv/.ssh/Project/Norm Predictions.png')
+pred[:, :6] = (pred[:,:6]* scaler)
+pred[:,6:12] = numpy.exp(pred[:,6:12])
+pred[:,6:12] = (pred[:,6:12]* scaler)
+
+
+# In[ ]:
+
+
+fig, axes = plt.subplots(2,3, figsize = (18,12))
+plt.suptitle("Correlations between true and predicted")
+axes[0,0].scatter(bfeatures[:,0], pred[:,0], color='red', ec='black', alpha = 0.6)
+axes[0,0].set(xlabel='True px (MeV)', ylabel='Predicted px (MeV)', xlim=(-500000,500000), ylim=(-500000,500000))
+axes[0,1].scatter(bfeatures[:,1], pred[:,1], color = 'blue', ec='black', alpha = 0.6)
+axes[0,1].set(xlabel='True py (MeV)', ylabel='Predicted py (MeV)', xlim=(-500000,500000), ylim=(-500000,500000))
+axes[0,2].scatter(bfeatures[:,2], pred[:,2], color = 'green', ec='black', alpha = 0.6)
+axes[0,2].set(xlabel='True pz (MeV)', ylabel='Predicted pz (MeV)', xlim=(-2000000,2000000), ylim=(-2000000,2000000))
+axes[1,0].scatter(bfeatures[:,3], pred[:,3], color = 'yellow', ec='black', alpha = 0.6)
+axes[1,0].set(xlabel='True pT (MeV)', ylabel='Predicted pT (MeV)', xlim=(0,500000), ylim=(0,500000))
+axes[1,1].scatter(bfeatures[:,4], pred[:,4], color = 'cyan', ec='black', alpha = 0.6)
+axes[1,1].set(xlabel='True eta', ylabel='Predicted eta')
+axes[1,2].scatter(bfeatures[:,5], pred[:,5], color = 'magenta', ec='black', alpha = 0.6)
+axes[1,2].set(xlabel='True Mass (MeV)', ylabel='Predicted Mass (MeV)')
+plt.tight_layout()
+plt.show()
+plt.savefig("Long Correlations")
 plt.close()
 
 
+# In[ ]:
 
-#Plots the loss curve and saves the data
-history_df = numpy.log(pd.DataFrame(history.history))
-LossFigure = history_df.loc[:, ['loss', 'val_loss']].plot().get_figure()
-LossFigure.savefig('Norm Loss Fig')
-history_df.to_pickle("/home/physics/phuspv/.ssh/Project/Loss Data/Norm.pkl")
+
+xs = numpy.linspace(0, len(bfeatures), len(bfeatures))
+print(numpy.shape(xs))
+fig, axes = plt.subplots(1,3, figsize = (16,8))
+axes[0].scatter(xs, pred[:,5], label = 'Pred', color = 'red', ec = 'black', alpha = 0.6)
+axes[0].set_ylim(5000,6000)
+axes[0].legend()
+axes[1].scatter(xs, bmass, label = 'True', color='green', ec = 'black', alpha = 0.6)
+axes[1].set_ylim(5000,6000)
+axes[1].legend()
+axes[2].scatter(xs, bmass - pred[:,5], label = 'True - Pred', color = 'blue', ec = 'black', alpha = 0.6)
+axes[2].legend()
+plt.show()
+plt.savefig('Long Mass Diff')
+plt.close()
+
